@@ -1,0 +1,402 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Aegis Backend Test",
+    "description": "Simulates a backend service that:\n1. Logs in to **Aegis** (same flow as aegis-admin-ui)\n2. Uses the resulting **Keycloak JWT** to consume endpoints on both **Aegis** and **aegis-admin**\n3. Validates incoming Keycloak JWTs for its own protected resources\n\n## Flow\n\n```\nGET /login\n  → GET  {aegis}/api/v1/auth/encryption-key       (fetch RSA JWK)\n  → encrypt { credentials: {pass, user_check}, anti_replay } with JWE (RSA-OAEP-256 / A256GCM)\n  → POST {aegis}/api/v1/auth/{country}/admin/login (Keycloak JWT returned)\n\nGET /admin/*     → proxied to aegis-admin using cached token\nGET /resource/*  → this backend validates the token you pass as Bearer\n```\n\n## Environment variables needed\n- `local_base_url`    — this test server (default `http://localhost:3000`)\n- `aegis_base_url`   — Aegis Core URL\n- `aegis_admin_url`  — aegis-admin URL\n- `token`            — filled automatically by the Login request",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [ 
+    {
+      "name": "1 · Login",
+      "_postman_id": "f1000001-0000-0000-0000-000000000001",
+      "description": "Full login flow identical to aegis-admin-ui:\n1. Fetch RSA JWK from Aegis\n2. Encrypt credentials as JWE (RSA-OAEP-256 / A256GCM)\n3. POST to Aegis admin/login\n4. Returns a Keycloak-issued JWT\n\nThe test script saves the token to {{token}}.",
+      "item": [
+        {
+          "name": "Login",
+          "_postman_id": "f1000001-0000-0000-0000-000000000002",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/login",
+              "host": ["{{local_base_url}}"],
+              "path": ["login"]
+            },
+            "description": "Calls internally:\n  GET  {{aegis_base_url}}/api/v1/auth/encryption-key\n  POST {{aegis_base_url}}/api/v1/auth/{{aegis_country}}/admin/login\n\nReturns the raw Keycloak JWT and its decoded payload."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "    const json = pm.response.json();",
+                  "    const token = json.token;",
+                  "    if (token) {",
+                  "        pm.environment.set('token', token);",
+                  "        const p = json.jwtPayload ?? {};",
+                  "        console.log('Token saved. username:', p.preferred_username, '| roles:', p.realm_access?.roles);",
+                  "        pm.test('Login OK', () => pm.response.to.have.status(200));",
+                  "        pm.test('Token received', () => pm.expect(token).to.be.a('string').and.not.empty);",
+                  "    } else {",
+                  "        pm.test('Token received', () => pm.expect.fail('token missing — check AEGIS_USERNAME / AEGIS_PASSWORD in .env'));",
+                  "    }",
+                  "} catch (e) { console.error(e.message); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Aegis — Encryption Key",
+          "_postman_id": "f1000001-0000-0000-0000-000000000003",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/aegis/encryption-key",
+              "host": ["{{local_base_url}}"],
+              "path": ["aegis", "encryption-key"]
+            },
+            "description": "Proxies: GET {{aegis_base_url}}/api/v1/auth/encryption-key\nReturns the RSA JWK used to encrypt the login password."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 · aegis-admin resources",
+      "_postman_id": "f2000001-0000-0000-0000-000000000001",
+      "description": "Proxied calls to aegis-admin. The backend uses the cached Keycloak JWT automatically — no Bearer header needed here.",
+      "item": [
+        {
+          "name": "Services — list",
+          "_postman_id": "f2000001-0000-0000-0000-000000000002",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/admin/services?page=1&take=10",
+              "host": ["{{local_base_url}}"],
+              "path": ["admin", "services"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "take", "value": "10" }
+              ]
+            },
+            "description": "Proxies: GET {{aegis_admin_url}}/api/v1/services"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Not 401', () => pm.expect(pm.response.code).to.not.equal(401));",
+                  "pm.test('Not 403', () => pm.expect(pm.response.code).to.not.equal(403));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Services — detail",
+          "_postman_id": "f2000001-0000-0000-0000-000000000003",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/admin/services/:id",
+              "host": ["{{local_base_url}}"],
+              "path": ["admin", "services", ":id"],
+              "variable": [{ "key": "id", "value": "" }]
+            },
+            "description": "Proxies: GET {{aegis_admin_url}}/api/v1/services/:id"
+          },
+          "response": []
+        },
+        {
+          "name": "Clients — list",
+          "_postman_id": "f2000001-0000-0000-0000-000000000004",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/admin/clients",
+              "host": ["{{local_base_url}}"],
+              "path": ["admin", "clients"]
+            },
+            "description": "Proxies: GET {{aegis_admin_url}}/api/v1/admin/clients"
+          },
+          "response": []
+        },
+        {
+          "name": "Clients — sessions",
+          "_postman_id": "f2000001-0000-0000-0000-000000000005",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/admin/clients/:clientId/sessions",
+              "host": ["{{local_base_url}}"],
+              "path": ["admin", "clients", ":clientId", "sessions"],
+              "variable": [{ "key": "clientId", "value": "" }]
+            },
+            "description": "Proxies: GET {{aegis_admin_url}}/api/v1/admin/clients/:clientId/sessions"
+          },
+          "response": []
+        },
+        {
+          "name": "Realm — sessions",
+          "_postman_id": "f2000001-0000-0000-0000-000000000006",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/admin/realms/:realm/sessions?page=1&take=10",
+              "host": ["{{local_base_url}}"],
+              "path": ["admin", "realms", ":realm", "sessions"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "take", "value": "10" }
+              ],
+              "variable": [{ "key": "realm", "value": "puntored-co" }]
+            },
+            "description": "Proxies: GET {{aegis_admin_url}}/api/v1/admin/realms/:realm/sessions"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3 · JWT validation (resource server)",
+      "_postman_id": "f3000001-0000-0000-0000-000000000001",
+      "description": "This backend acts as a resource server that validates the Keycloak JWT you send.\nUse the token from step 1 as Bearer.\n\nJWKS is fetched automatically from {iss}/protocol/openid-connect/certs.",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          { "key": "token", "value": "{{token}}", "type": "string" }
+        ]
+      },
+      "item": [
+        {
+          "name": "Public resource (no token)",
+          "_postman_id": "f3000001-0000-0000-0000-000000000002",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/public",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "public"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Protected (signature only)",
+          "_postman_id": "f3000001-0000-0000-0000-000000000003",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/protected",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "protected"]
+            },
+            "description": "Validates RS256 signature via Keycloak JWKS + expiry.\nNo role check — any valid Keycloak JWT grants access.\n\n→ 200  valid token\n→ 401  missing/invalid/expired token"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Access granted', () => pm.expect(json.message).to.include('granted'));",
+                  "pm.test('JWT claims returned', () => {",
+                  "    pm.expect(json.jwt).to.have.property('sub');",
+                  "    pm.expect(json.jwt).to.have.property('roles');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Admin resource (role: aegis-admin)",
+          "_postman_id": "f3000001-0000-0000-0000-000000000004",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/admin",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "admin"]
+            },
+            "description": "Validates signature + checks realm_access.roles[] contains 'aegis-admin'.\n\n→ 200  valid token + role present\n→ 403  valid token but role missing"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Access granted', () => pm.expect(pm.response.json().message).to.include('granted'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Role check — aegis-writer",
+          "_postman_id": "f3000001-0000-0000-0000-000000000005",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/role/aegis-writer",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "role", "aegis-writer"]
+            },
+            "description": "Dynamic role check. Replace last segment with any role from realm_access.roles."
+          },
+          "response": []
+        },
+        {
+          "name": "Role check — ADMIN",
+          "_postman_id": "f3000001-0000-0000-0000-000000000006",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/role/ADMIN",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "role", "ADMIN"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4 · Negative Tests",
+      "_postman_id": "f4000001-0000-0000-0000-000000000001",
+      "description": "Verify the backend correctly rejects bad tokens.",
+      "item": [
+        {
+          "name": "No token → 401",
+          "_postman_id": "f4000001-0000-0000-0000-000000000002",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/protected",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "protected"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Tampered token → 401",
+          "_postman_id": "f4000001-0000-0000-0000-000000000003",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJmYWtlIiwiaXNzIjoiaHR0cHM6Ly9mYWtlLmlzc3Vlci5jbyJ9.invalidsig" }
+            ],
+            "url": {
+              "raw": "{{local_base_url}}/resource/protected",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "protected"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                  "pm.test('JWT validation failed', () => pm.expect(pm.response.json().error).to.include('JWT validation failed'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Valid token, missing role → 403",
+          "_postman_id": "f4000001-0000-0000-0000-000000000004",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/role/super-secret-role",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "role", "super-secret-role"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "pm.test('token_roles listed', () => pm.expect(pm.response.json().token_roles).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5 · Utils",
+      "_postman_id": "f5000001-0000-0000-0000-000000000001",
+      "item": [
+        {
+          "name": "Health",
+          "_postman_id": "f5000001-0000-0000-0000-000000000002",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/health",
+              "host": ["{{local_base_url}}"],
+              "path": ["health"]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

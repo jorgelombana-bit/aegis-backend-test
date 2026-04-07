@@ -1,0 +1,39 @@
+{
+  "id": "b1c2d3e4-f5a6-7890-bcde-f01234567890",
+  "name": "Aegis Backend Test — Dev",
+  "values": [
+    {
+      "key": "local_base_url",
+      "value": "http://localhost:3000",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "aegis_base_url",
+      "value": "https://aegis-dev.preprodcxr.co",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "aegis_admin_url",
+      "value": "https://aegis-admin-dev.preprodcxr.co",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "aegis_country",
+      "value": "co",
+      "type": "default",
+      "enabled": true
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "default",
+      "enabled": true,
+      "description": "Filled automatically by the Login request test script"
+    }
+  ],
+  "_postman_variable_scope": "environment",
+  "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+}

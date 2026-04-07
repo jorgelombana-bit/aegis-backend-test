@@ -1,0 +1,390 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "Aegis M2M Backend Test",
+    "description": "Test collection for the aegis-backend-test service.\n\n## How to use\n\n**Step 1** — Run `1 · Login`. The backend authenticates itself to Aegis with its\n`clientId` and `clientSecret`. The token is saved automatically to `{{aegis_access_token}}`.\n\n**Step 2** — Run any request in `2` or `3` using that token as Bearer.\nThe backend validates the token against the Aegis public key (JWKS) and\ngrants or denies access to its own protected resources.\n\n**Step 3** — Run `4 · Negative Tests` to confirm the backend correctly\nrejects invalid or missing tokens.\n\n## JWT validation\n- **No roles** — only verifies the RS256 signature and expiry against `{{aegis_base_url}}/.well-known/jwks.json`.\n- **With roles** — same as above, plus checks that the required role is present in `roles[]`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1 · Login",
+      "_postman_id": "f1000001-0000-0000-0000-000000000001",
+      "description": "The backend authenticates itself to Aegis using its clientId and clientSecret.\nThe returned Aegis-signed JWT is saved automatically to {{aegis_access_token}}.",
+      "item": [
+        {
+          "name": "Login (M2M)",
+          "_postman_id": "f1000001-0000-0000-0000-000000000002",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/token",
+              "host": ["{{local_base_url}}"],
+              "path": ["token"]
+            },
+            "description": "Calls Aegis:\n  POST {{aegis_base_url}}/api/v1/auth/{{aegis_country}}/token\n  Authorization: Basic base64(AEGIS_CLIENT_ID:AEGIS_CLIENT_SECRET)\n\nReturns the token and its decoded payload so you can inspect the claims (sub, roles, is_m2m, exp...).\nThe test script auto-saves access_token → {{aegis_access_token}}."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "try {",
+                  "    const json = pm.response.json();",
+                  "    const token = json?.tokenResponse?.access_token;",
+                  "    if (token) {",
+                  "        pm.environment.set('aegis_access_token', token);",
+                  "        const p = json?.jwtPayload ?? {};",
+                  "        console.log('Token saved. roles:', p.roles, '| is_m2m:', p.is_m2m, '| exp:', p.exp);",
+                  "        pm.test('Token received', () => pm.expect(token).to.be.a('string').and.not.empty);",
+                  "        pm.test('is_aegis = true', () => pm.expect(p.is_aegis).to.be.true);",
+                  "        pm.test('is_m2m = true', () => pm.expect(p.is_m2m).to.be.true);",
+                  "    } else {",
+                  "        pm.test('Token received', () => pm.expect.fail('access_token missing — check AEGIS_CLIENT_ID / AEGIS_CLIENT_SECRET in .env'));",
+                  "    }",
+                  "} catch (e) { console.error(e.message); }"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 · Access resource — JWT (no roles)",
+      "_postman_id": "f2000001-0000-0000-0000-000000000001",
+      "description": "The backend validates the Aegis JWT against the Aegis public key (JWKS).\nOnly the signature and expiry are checked — no role required.",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{aegis_access_token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Public resource (no token needed)",
+          "_postman_id": "f2000001-0000-0000-0000-000000000003",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/public",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "public"]
+            },
+            "description": "Open resource — no token required."
+          },
+          "response": []
+        },
+        {
+          "name": "Protected resource (signature only)",
+          "_postman_id": "f2000001-0000-0000-0000-000000000002",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/protected",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "protected"]
+            },
+            "description": "Token is verified against Aegis JWKS (RS256 signature + expiry).\nNo role is required — any valid Aegis JWT is accepted.\n\n→ 200  token valid\n→ 401  token missing, expired, or invalid signature"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Access granted', () => pm.expect(json.message).to.include('granted'));",
+                  "pm.test('JWT claims returned', () => {",
+                  "    pm.expect(json.jwt).to.have.property('sub');",
+                  "    pm.expect(json.jwt).to.have.property('roles');",
+                  "    pm.expect(json.jwt.is_m2m).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3 · Access resource — JWT with roles",
+      "_postman_id": "f3000001-0000-0000-0000-000000000001",
+      "description": "The backend validates the Aegis JWT AND checks that the required role is present in roles[].",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{aegis_access_token}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Admin resource (role: {{aegis_required_role}})",
+          "_postman_id": "f3000001-0000-0000-0000-000000000002",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/admin",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "admin"]
+            },
+            "description": "Token verified (signature + expiry) AND roles[] must contain '{{aegis_required_role}}'.\n\n→ 200  token valid + role present\n→ 401  token invalid\n→ 403  token valid but role missing"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('Access granted', () => pm.expect(json.message).to.include('granted'));",
+                  "pm.test('Admin resources returned', () => pm.expect(json.adminResources).to.be.an('array').and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Role check — aegis-reader",
+          "_postman_id": "f3000001-0000-0000-0000-000000000003",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/role/aegis-reader",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "role", "aegis-reader"]
+            },
+            "description": "Checks for role 'aegis-reader' in the token.\nReplace the last path segment with any role name to test it dynamically."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Role confirmed', () => pm.expect(pm.response.json().message).to.include('aegis-reader'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Role check — ADMIN",
+          "_postman_id": "f3000001-0000-0000-0000-000000000004",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/role/ADMIN",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "role", "ADMIN"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Role confirmed', () => pm.expect(pm.response.json().message).to.include('ADMIN'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Role check — missing role (expect 403)",
+          "_postman_id": "f3000001-0000-0000-0000-000000000005",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/role/non-existent-role",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "role", "non-existent-role"]
+            },
+            "description": "Token signature is valid but the role does not exist in roles[].\n→ 403 with required_role and token_roles listed."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('Forbidden error', () => pm.expect(json.error).to.include('Forbidden'));",
+                  "pm.test('token_roles listed', () => pm.expect(json.token_roles).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4 · Negative Tests",
+      "_postman_id": "f4000001-0000-0000-0000-000000000001",
+      "description": "Confirm the backend correctly rejects requests with no token, an invalid token, or the wrong role.",
+      "item": [
+        {
+          "name": "No token → 401",
+          "_postman_id": "f4000001-0000-0000-0000-000000000002",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/protected",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "protected"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                  "pm.test('Error present', () => pm.expect(pm.response.json().error).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Tampered token → 401",
+          "_postman_id": "f4000001-0000-0000-0000-000000000003",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJmYWtlIn0.invalidsignature"
+              }
+            ],
+            "url": {
+              "raw": "{{local_base_url}}/resource/protected",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "protected"]
+            },
+            "description": "Signature is invalid — the token was not signed by Aegis."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 401', () => pm.response.to.have.status(401));",
+                  "pm.test('JWT validation failed', () => pm.expect(pm.response.json().error).to.include('JWT validation failed'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Valid token, wrong role → 403",
+          "_postman_id": "f4000001-0000-0000-0000-000000000004",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{aegis_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/resource/role/super-secret-role",
+              "host": ["{{local_base_url}}"],
+              "path": ["resource", "role", "super-secret-role"]
+            },
+            "description": "Token signature is valid but 'super-secret-role' is not in roles[].\n→ 403 shows what roles the token actually has."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 403', () => pm.response.to.have.status(403));",
+                  "const json = pm.response.json();",
+                  "pm.test('required_role in response', () => pm.expect(json.required_role).to.equal('super-secret-role'));",
+                  "pm.test('token_roles listed', () => pm.expect(json.token_roles).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5 · Utils",
+      "_postman_id": "f5000001-0000-0000-0000-000000000001",
+      "item": [
+        {
+          "name": "Health",
+          "_postman_id": "f5000001-0000-0000-0000-000000000002",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{local_base_url}}/health",
+              "host": ["{{local_base_url}}"],
+              "path": ["health"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Aegis JWKS (public key)",
+          "_postman_id": "f5000001-0000-0000-0000-000000000003",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{aegis_base_url}}/.well-known/jwks.json",
+              "host": ["{{aegis_base_url}}"],
+              "path": [".well-known", "jwks.json"]
+            },
+            "description": "The public key the backend uses to verify all incoming Aegis JWTs."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
