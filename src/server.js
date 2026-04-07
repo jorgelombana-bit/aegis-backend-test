@@ -61,6 +61,7 @@ async function fetchM2MToken() {
 async function validateJwt(req, res, next) {
   const auth = req.headers.authorization ?? "";
   if (!auth.startsWith("Bearer ")) {
+    console.warn(`[JWT] MISSING TOKEN  | ${req.method} ${req.path}`);
     return res.status(401).json({
       error: "Missing or invalid Authorization header",
       hint: "Expected: Authorization: Bearer <aegis_access_token>",
@@ -73,12 +74,23 @@ async function validateJwt(req, res, next) {
     if (AEGIS_TOKEN_ISSUER) options.issuer = AEGIS_TOKEN_ISSUER;
     const { payload } = await jwtVerify(token, getJwks(), options);
     req.jwt = payload;
+    const expiresIn = payload.exp ? Math.round(payload.exp - Date.now() / 1000) : null;
+    console.log(`[JWT] VALID  | ${req.method} ${req.path} | client=${payload.client_id} | roles=${(payload.roles ?? []).join(",")} | expires_in=${expiresIn}s`);
     next();
   } catch (err) {
+    const isExpired = err.code === "ERR_JWT_EXPIRED";
+    const isInvalidSig = err.code === "ERR_JWS_SIGNATURE_VERIFICATION_FAILED";
+    const label = isExpired ? "EXPIRED" : isInvalidSig ? "INVALID_SIGNATURE" : "INVALID";
+    console.warn(`[JWT] ${label} | ${req.method} ${req.path} | ${err.message}`);
     return res.status(401).json({
-      error: "JWT validation failed",
+      error: isExpired
+        ? "Token expired — call GET /token to obtain a fresh one"
+        : "JWT validation failed",
+      code: err.code ?? "JWT_ERROR",
       detail: err.message,
+      expired: isExpired,
       jwksUrl: `${AEGIS_BASE_URL}/.well-known/jwks.json`,
+      ...(isExpired ? { action: "Call GET /token to refresh" } : {}),
     });
   }
 }
@@ -91,8 +103,10 @@ function requireRole(role) {
     (req, res, next) => {
       const tokenRoles = Array.isArray(req.jwt?.roles) ? req.jwt.roles : [];
       if (tokenRoles.includes(role)) {
+        console.log(`[ROLE] GRANTED | ${req.method} ${req.path} | required=${role}`);
         return next();
       }
+      console.warn(`[ROLE] DENIED  | ${req.method} ${req.path} | required=${role} | token_has=${tokenRoles.join(",")}`);
       return res.status(403).json({
         error: "Forbidden — missing required role",
         required_role: role,
@@ -229,12 +243,14 @@ app.get("/resource/role/:roleName", validateJwt, (req, res) => {
   const { roleName } = req.params;
   const tokenRoles = Array.isArray(req.jwt?.roles) ? req.jwt.roles : [];
   if (!tokenRoles.includes(roleName)) {
+    console.warn(`[ROLE] DENIED  | GET /resource/role/${roleName} | token_has=${tokenRoles.join(",")}`);
     return res.status(403).json({
       error: "Forbidden — missing required role",
       required_role: roleName,
       token_roles: tokenRoles,
     });
   }
+  console.log(`[ROLE] GRANTED | GET /resource/role/${roleName}`);
   res.json({
     message: `Access granted — JWT valid and role '${roleName}' confirmed`,
     validation: `RS256 signature (Aegis JWKS) + expiry + role '${roleName}'`,
